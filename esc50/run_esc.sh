@@ -1,0 +1,149 @@
+#!/bin/bash
+#SBATCH -p gpu
+#SBATCH --gres=gpu:4
+#SBATCH -c 4
+#SBATCH -n 1
+#SBATCH --mem=48000
+#SBATCH --job-name="mini-ast-esc50"
+#SBATCH --output=./log_%j.txt
+
+set -x
+
+# Environment setup
+export TORCH_HOME=../../pretrained_models
+
+# Model configuration
+model=miniast  # Use 'ast' for baseline comparison
+dataset=esc50
+imagenetpretrain=True
+audiosetpretrain=True
+
+# Learning rate (lower for audioset pretrained, higher for imagenet only)
+if [ $audiosetpretrain == True ]; then
+    lr=1e-5
+else
+    lr=1e-4
+fi
+
+# Data augmentation
+freqm=24
+timem=96
+mixup=0
+
+# Training settings
+epoch=25
+batch_size=24
+fstride=10
+tstride=10
+
+# Dataset statistics for ESC-50
+dataset_mean=-6.6268077
+dataset_std=5.358466
+audio_length=512
+noise=False
+
+# Evaluation settings
+metrics=acc
+loss=CE
+warmup=False
+lrscheduler_start=5
+lrscheduler_step=1
+lrscheduler_decay=0.85
+
+# ========== MiniViT-specific settings ==========
+num_shared_layers=2        # Share every 2 consecutive layers
+use_attn_transform=True    # Enable attention transformation
+use_mlp_transform=True     # Enable MLP transformation
+mlp_kernel_size=7          # Kernel size for depth-wise conv
+
+# ========== Distillation settings ==========
+use_distillation=True      # Enable knowledge distillation
+distill_beta=1.0           # Weight for attention distillation
+distill_gamma=0.1          # Weight for hidden state distillation
+distill_temperature=1.0    # Temperature for soft labels
+distill_weight=1.0         # Overall distillation loss weight
+
+# Train a teacher model (if needed)
+teacher_exp_dir=./exp/teacher-${dataset}-ast-b$batch_size-lr${lr}
+
+# Check if teacher model exists
+if [ ! -f "${teacher_exp_dir}/fold1/models/best_audio_model.pth" ]; then
+    echo "Teacher model not found. Training teacher first..."
+    use_distillation=False
+    teacher_model_path=""
+else
+    teacher_model_path="${teacher_exp_dir}/fold\${fold}/models/best_audio_model.pth"
+fi
+
+# Experiment directory
+base_exp_dir=./exp/mini-${dataset}-f$fstride-t$tstride-imp$imagenetpretrain-asp$audiosetpretrain-b$batch_size-lr${lr}-shared${num_shared_layers}
+
+# Prepare ESC-50 dataset
+python ./prep_esc50.py
+
+if [ -d $base_exp_dir ]; then
+    echo 'Experiment directory exists, skipping...'
+    exit
+fi
+mkdir -p $base_exp_dir
+
+# 5-fold cross validation
+for((fold=1;fold<=5;fold++));
+do
+    echo "Processing fold ${fold}"
+    
+    exp_dir=${base_exp_dir}/fold${fold}
+    
+    tr_data=./data/datafiles/esc_train_data_${fold}.json
+    te_data=./data/datafiles/esc_eval_data_${fold}.json
+    
+    # Set teacher model path for this fold
+    if [ $use_distillation == True ]; then
+        teacher_path=${teacher_exp_dir}/fold${fold}/models/best_audio_model.pth
+    else
+        teacher_path=""
+    fi
+    
+    CUDA_CACHE_DISABLE=1 python -W ignore ../../src/run_mini.py \
+        --model ${model} \
+        --dataset ${dataset} \
+        --data-train ${tr_data} \
+        --data-val ${te_data} \
+        --exp-dir $exp_dir \
+        --label-csv ./data/esc_class_labels_indices.csv \
+        --n_class 50 \
+        --lr $lr \
+        --n-epochs ${epoch} \
+        --batch-size $batch_size \
+        --save_model False \
+        --freqm $freqm \
+        --timem $timem \
+        --mixup ${mixup} \
+        --bal none \
+        --tstride $tstride \
+        --fstride $fstride \
+        --imagenet_pretrain $imagenetpretrain \
+        --audioset_pretrain $audiosetpretrain \
+        --metrics ${metrics} \
+        --loss ${loss} \
+        --warmup ${warmup} \
+        --lrscheduler_start ${lrscheduler_start} \
+        --lrscheduler_step ${lrscheduler_step} \
+        --lrscheduler_decay ${lrscheduler_decay} \
+        --dataset_mean ${dataset_mean} \
+        --dataset_std ${dataset_std} \
+        --audio_length ${audio_length} \
+        --noise ${noise} \
+        --num_shared_layers ${num_shared_layers} \
+        --use_attn_transform ${use_attn_transform} \
+        --use_mlp_transform ${use_mlp_transform} \
+        --mlp_kernel_size ${mlp_kernel_size} \
+        --use_distillation ${use_distillation} \
+        --teacher_model_path "${teacher_path}" \
+        --distill_beta ${distill_beta} \
+        --distill_gamma ${distill_gamma} \
+        --distill_temperature ${distill_temperature} \
+        --distill_weight ${distill_weight}
+done
+
+python ./get_esc_result.py --exp_path ${base_exp_dir}
