@@ -10,7 +10,7 @@
 set -x
 
 # Environment setup
-export TORCH_HOME=../../pretrained_models
+export TORCH_HOME=../pretrained_models
 
 # Model configuration
 model=miniast  # Use 'ast' for baseline comparison
@@ -32,7 +32,7 @@ mixup=0
 
 # Training settings
 epoch=25
-batch_size=24
+batch_size=32
 fstride=10
 tstride=10
 
@@ -104,7 +104,7 @@ do
         teacher_path=""
     fi
     
-    CUDA_CACHE_DISABLE=1 python -W ignore ../../src/run_mini.py \
+    CUDA_CACHE_DISABLE=1 python -W ignore ../src/run.py \
         --model ${model} \
         --dataset ${dataset} \
         --data-train ${tr_data} \
