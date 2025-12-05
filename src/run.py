@@ -19,8 +19,8 @@ from torch.utils.data import WeightedRandomSampler
 basepath = os.path.dirname(os.path.dirname(sys.path[0]))
 sys.path.append(basepath)
 import dataloader
-from miniast_models import MiniASTModel
-from ast_models import ASTModel
+from src.models.miniast_models import MiniASTModel
+from src.models.ast_models import ASTModel
 import numpy as np
 from traintest import train, validate
 
