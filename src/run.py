@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 # @Time    : 2024
 # @Author  : Adapted from Yuan Gong's AST with MiniViT framework
-# @File    : run_mini.py
+# @File    : run.py
+
+"""
+Run script for MiniAST with weight multiplexing (without distillation).
+"""
 
 import argparse
 import os
@@ -15,8 +19,8 @@ from torch.utils.data import WeightedRandomSampler
 basepath = os.path.dirname(os.path.dirname(sys.path[0]))
 sys.path.append(basepath)
 import dataloader
-from models.miniast_models import MiniASTModel
-from models.ast_models import ASTModel
+from miniast_models import MiniASTModel
+from ast_models import ASTModel
 import numpy as np
 from traintest import train, validate
 
@@ -102,27 +106,13 @@ parser.add_argument('--wa_end', type=int, default=5,
 
 # ========== MiniViT-specific arguments ==========
 parser.add_argument("--num_shared_layers", type=int, default=2,
-                    help="number of consecutive layers to share weights (MiniViT)")
+                    help="number of consecutive layers to share weights")
 parser.add_argument('--use_attn_transform', help='use attention transformation',
                     type=ast.literal_eval, default='True')
 parser.add_argument('--use_mlp_transform', help='use MLP transformation',
                     type=ast.literal_eval, default='True')
 parser.add_argument("--mlp_kernel_size", type=int, default=7,
                     help="kernel size for MLP depth-wise convolution")
-
-# ========== Distillation arguments ==========
-parser.add_argument('--use_distillation', help='use knowledge distillation',
-                    type=ast.literal_eval, default='False')
-parser.add_argument("--teacher_model_path", type=str, default='',
-                    help="path to teacher model checkpoint")
-parser.add_argument("--distill_beta", type=float, default=1.0,
-                    help="weight for attention distillation loss")
-parser.add_argument("--distill_gamma", type=float, default=0.1,
-                    help="weight for hidden state distillation loss")
-parser.add_argument("--distill_temperature", type=float, default=1.0,
-                    help="temperature for soft labels")
-parser.add_argument("--distill_weight", type=float, default=1.0,
-                    help="weight for total distillation loss")
 
 args = parser.parse_args()
 
@@ -212,40 +202,6 @@ else:
         model_size='base384'
     )
 
-# Load teacher model for distillation
-teacher_model = None
-if args.use_distillation:
-    print(f'Loading teacher model from: {args.teacher_model_path}')
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # Create teacher AST model
-    teacher_model = ASTModel(
-        label_dim=args.n_class,
-        fstride=args.fstride,
-        tstride=args.tstride,
-        input_fdim=128,
-        input_tdim=args.audio_length,
-        imagenet_pretrain=False,
-        audioset_pretrain=False,
-        model_size='base384',
-        verbose=False
-    )
-    
-    # Load teacher weights
-    if args.teacher_model_path:
-        sd = torch.load(args.teacher_model_path, map_location=device)
-        # Handle DataParallel state dict
-        if list(sd.keys())[0].startswith('module.'):
-            from collections import OrderedDict
-            new_sd = OrderedDict()
-            for k, v in sd.items():
-                new_sd[k.replace('module.', '')] = v
-            sd = new_sd
-        teacher_model.load_state_dict(sd, strict=False)
-        print('Teacher model loaded successfully')
-    else:
-        print('Warning: No teacher model path provided, using randomly initialized teacher')
-
 # Create experiment directory
 print("\nCreating experiment directory: %s" % args.exp_dir)
 os.makedirs("%s/models" % args.exp_dir, exist_ok=True)
@@ -257,15 +213,9 @@ total_params = sum(p.numel() for p in audio_model.parameters())
 trainable_params = sum(p.numel() for p in audio_model.parameters() if p.requires_grad)
 print(f'\nModel parameters: {total_params/1e6:.2f}M total, {trainable_params/1e6:.2f}M trainable')
 
-if teacher_model is not None:
-    teacher_params = sum(p.numel() for p in teacher_model.parameters())
-    print(f'Teacher parameters: {teacher_params/1e6:.2f}M')
-    compression_ratio = teacher_params / total_params
-    print(f'Compression ratio: {compression_ratio:.2f}x')
-
 # Start training
 print(f'\nStarting training for {args.n_epochs} epochs')
-train(audio_model, train_loader, val_loader, args, teacher_model=teacher_model)
+train(audio_model, train_loader, val_loader, args)
 
 # Evaluate on test set for speechcommands
 if args.dataset == 'speechcommands':
@@ -294,3 +244,5 @@ if args.dataset == 'speechcommands':
     print("Accuracy: {:.6f}".format(eval_acc))
     print("AUC: {:.6f}".format(eval_mAUC))
     np.savetxt(args.exp_dir + '/eval_result.csv', [val_acc, val_mAUC, eval_acc, eval_mAUC])
+
+print('\nTraining completed!')

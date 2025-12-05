@@ -9,16 +9,15 @@
 
 set -x
 
-# Environment setup
-export TORCH_HOME=../pretrained_models
+export TORCH_HOME=../../pretrained_models
 
 # Model configuration
-model=miniast  # Use 'ast' for baseline comparison
+model=miniast
 dataset=esc50
 imagenetpretrain=True
 audiosetpretrain=True
 
-# Learning rate (lower for audioset pretrained, higher for imagenet only)
+# Learning rate
 if [ $audiosetpretrain == True ]; then
     lr=1e-5
 else
@@ -32,7 +31,7 @@ mixup=0
 
 # Training settings
 epoch=25
-batch_size=32
+batch_size=24
 fstride=10
 tstride=10
 
@@ -56,25 +55,6 @@ use_attn_transform=True    # Enable attention transformation
 use_mlp_transform=True     # Enable MLP transformation
 mlp_kernel_size=7          # Kernel size for depth-wise conv
 
-# ========== Distillation settings ==========
-use_distillation=True      # Enable knowledge distillation
-distill_beta=1.0           # Weight for attention distillation
-distill_gamma=0.1          # Weight for hidden state distillation
-distill_temperature=1.0    # Temperature for soft labels
-distill_weight=1.0         # Overall distillation loss weight
-
-# Train a teacher model (if needed)
-teacher_exp_dir=./exp/teacher-${dataset}-ast-b$batch_size-lr${lr}
-
-# Check if teacher model exists
-if [ ! -f "${teacher_exp_dir}/fold1/models/best_audio_model.pth" ]; then
-    echo "Teacher model not found. Training teacher first..."
-    use_distillation=False
-    teacher_model_path=""
-else
-    teacher_model_path="${teacher_exp_dir}/fold\${fold}/models/best_audio_model.pth"
-fi
-
 # Experiment directory
 base_exp_dir=./exp/mini-${dataset}-f$fstride-t$tstride-imp$imagenetpretrain-asp$audiosetpretrain-b$batch_size-lr${lr}-shared${num_shared_layers}
 
@@ -82,7 +62,7 @@ base_exp_dir=./exp/mini-${dataset}-f$fstride-t$tstride-imp$imagenetpretrain-asp$
 python ./prep_esc50.py
 
 if [ -d $base_exp_dir ]; then
-    echo 'Experiment directory exists, skipping...'
+    echo 'Experiment directory exists'
     exit
 fi
 mkdir -p $base_exp_dir
@@ -97,14 +77,7 @@ do
     tr_data=./data/datafiles/esc_train_data_${fold}.json
     te_data=./data/datafiles/esc_eval_data_${fold}.json
     
-    # Set teacher model path for this fold
-    if [ $use_distillation == True ]; then
-        teacher_path=${teacher_exp_dir}/fold${fold}/models/best_audio_model.pth
-    else
-        teacher_path=""
-    fi
-    
-    CUDA_CACHE_DISABLE=1 python -W ignore ../src/run.py \
+    CUDA_CACHE_DISABLE=1 python -W ignore ../../src/run.py \
         --model ${model} \
         --dataset ${dataset} \
         --data-train ${tr_data} \
@@ -137,13 +110,9 @@ do
         --num_shared_layers ${num_shared_layers} \
         --use_attn_transform ${use_attn_transform} \
         --use_mlp_transform ${use_mlp_transform} \
-        --mlp_kernel_size ${mlp_kernel_size} \
-        --use_distillation ${use_distillation} \
-        --teacher_model_path "${teacher_path}" \
-        --distill_beta ${distill_beta} \
-        --distill_gamma ${distill_gamma} \
-        --distill_temperature ${distill_temperature} \
-        --distill_weight ${distill_weight}
+        --mlp_kernel_size ${mlp_kernel_size}
 done
 
 python ./get_esc_result.py --exp_path ${base_exp_dir}
+
+echo "MiniAST ESC-50 experiment completed!"
