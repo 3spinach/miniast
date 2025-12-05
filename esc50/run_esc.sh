@@ -77,7 +77,7 @@ do
     tr_data=./data/datafiles/esc_train_data_${fold}.json
     te_data=./data/datafiles/esc_eval_data_${fold}.json
     
-    CUDA_CACHE_DISABLE=1 python -W ignore ../../src/run.py \
+    CUDA_CACHE_DISABLE=1 python -W ignore ../src/run.py \
         --model ${model} \
         --dataset ${dataset} \
         --data-train ${tr_data} \
